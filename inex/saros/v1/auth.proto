@@ -1,0 +1,131 @@
+edition = "2023";
+
+package inex.saros.v1;
+
+// Passwordless sign-in via WebAuthn/passkeys — no external IdP. BeginPasskey
+// returns the browser's ceremony options as a JSON string (flow_id ties a
+// finish to its begin); FinishPasskey verifies the credential and mints an
+// opaque token sent as `Authorization: Bearer <token>`.
+service AuthService {
+  // Anonymous (empty username) is not an error.
+  rpc WhoAmI(WhoAmIRequest) returns (WhoAmIResponse);
+
+  // Empty username signs in (usernameless); a username registers a new
+  // account. `mode` tells the browser which ceremony to run.
+  rpc BeginPasskey(BeginPasskeyRequest) returns (BeginPasskeyResponse);
+  rpc FinishPasskey(FinishPasskeyRequest) returns (FinishPasskeyResponse);
+
+  // Sign a tool (CLI, studio, …) in without pasting a token: it opens
+  // verification_uri and polls until the signed-in user approves.
+  rpc BeginLogin(BeginLoginRequest) returns (BeginLoginResponse);
+  rpc PollLogin(PollLoginRequest) returns (PollLoginResponse);
+
+  // Browser side of the approval flow (session required).
+  rpc DescribeLogin(DescribeLoginRequest) returns (DescribeLoginResponse);
+  rpc DecideLogin(DecideLoginRequest) returns (DecideLoginResponse);
+
+  // A long-lived token for headless/CI use (session required).
+  rpc CreateApiToken(CreateApiTokenRequest) returns (CreateApiTokenResponse);
+
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+}
+
+// Which WebAuthn ceremony BeginPasskey started.
+enum PasskeyMode {
+  PASSKEY_MODE_UNSPECIFIED = 0;
+  PASSKEY_MODE_REGISTER = 1;
+  PASSKEY_MODE_AUTHENTICATE = 2;
+}
+
+message BeginPasskeyRequest {
+  string username = 1;
+}
+
+message BeginPasskeyResponse {
+  string flow_id = 1;
+  string options_json = 2;
+  PasskeyMode mode = 3;
+}
+
+message FinishPasskeyRequest {
+  string flow_id = 1;
+  string credential_json = 2;
+}
+
+message FinishPasskeyResponse {
+  string session_token = 1;
+  string username = 2;
+}
+
+enum LoginStatus {
+  LOGIN_STATUS_UNSPECIFIED = 0;
+  LOGIN_STATUS_PENDING = 1;
+  LOGIN_STATUS_APPROVED = 2;
+  LOGIN_STATUS_DENIED = 3;
+  LOGIN_STATUS_EXPIRED = 4;
+}
+
+message BeginLoginRequest {
+  // Shown to the approver, e.g. "saros CLI on hostname".
+  string label = 1;
+}
+
+message BeginLoginResponse {
+  // The secret the tool polls with.
+  string device_code = 1;
+  // Short human code, also prefilled into verification_uri.
+  string user_code = 2;
+  string verification_uri = 3;
+  int32 interval_secs = 4;
+  int32 expires_in_secs = 5;
+}
+
+message PollLoginRequest {
+  string device_code = 1;
+}
+
+message PollLoginResponse {
+  LoginStatus status = 1;
+  // Set once, only when APPROVED.
+  string token = 2;
+  string username = 3;
+}
+
+message DescribeLoginRequest {
+  string user_code = 1;
+}
+
+message DescribeLoginResponse {
+  bool found = 1;
+  string label = 2;
+  LoginStatus status = 3;
+}
+
+message DecideLoginRequest {
+  string user_code = 1;
+  bool approve = 2;
+}
+
+message DecideLoginResponse {
+  LoginStatus status = 1;
+}
+
+message WhoAmIRequest {}
+
+message WhoAmIResponse {
+  // Empty when anonymous.
+  string username = 1;
+  bool admin = 2;
+}
+
+message CreateApiTokenRequest {
+  string name = 1;
+}
+
+message CreateApiTokenResponse {
+  string token = 1;
+}
+
+message LogoutRequest {}
+
+message LogoutResponse {}

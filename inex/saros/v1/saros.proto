@@ -1,0 +1,136 @@
+edition = "2023";
+
+package inex.saros.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// The firmware registry. Devices, their fixed slot layouts, and presentation
+// all come from the server's device catalogue (keyed by device_id); this
+// service serves the immutable firmware versions published against them.
+// Enumeration is unauthenticated; publishing needs a session or the service
+// token — admin/service goes live, other sessions land in staging until an
+// admin reviews them.
+service FirmwareService {
+  // The devices that have published firmware, then a fresh snapshot on every
+  // change.
+  rpc WatchDevices(WatchDevicesRequest) returns (stream WatchDevicesResponse);
+  rpc WatchFirmware(WatchFirmwareRequest) returns (stream WatchFirmwareResponse);
+  // device_id must be a known catalogue device and every blob uploaded; a
+  // duplicate (device_id, version) is AlreadyExists. Non-admin sessions stage.
+  rpc PublishFirmware(PublishFirmwareRequest) returns (PublishFirmwareResponse);
+  // Admin only.
+  rpc ListStagedFirmware(ListStagedFirmwareRequest) returns (ListStagedFirmwareResponse);
+  // Admin: approve a staged submission (into the live catalogue) or reject it.
+  rpc ReviewStagedFirmware(ReviewStagedFirmwareRequest) returns (ReviewStagedFirmwareResponse);
+}
+
+message BlobSlot {
+  string name = 1;
+  string description = 2;
+}
+
+// A console generation. Devkits are cross-generational (a TWL unit also runs
+// NTR, the Pocket cart runs AGB/CGB/DMG), so Device.platforms is a set.
+enum Platform {
+  PLATFORM_UNSPECIFIED = 0;
+  PLATFORM_DMG = 1;
+  PLATFORM_CGB = 2;
+  PLATFORM_AGB = 3;
+  PLATFORM_NTR = 4;
+  PLATFORM_TWL = 5;
+  PLATFORM_CTR = 6;
+}
+
+// Presentation for a device, served from the server's catalogue. Output only.
+message Device {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  // FirmwareBlob.slot indexes into this.
+  repeated BlobSlot slots = 4;
+  uint32 firmware_count = 5;
+  // Accent colour (`#rrggbb`).
+  string colour = 6;
+  repeated Platform platforms = 7;
+}
+
+message FirmwareBlob {
+  // Indexes into Device.slots.
+  uint32 slot = 1;
+  // Canonical file name to write the blob under.
+  string file = 2;
+  uint64 size_bytes = 3;
+  // Lowercase-hex SHA-256 — the BlobService key.
+  string sha256 = 4;
+}
+
+enum ChangeKind {
+  CHANGE_KIND_UNSPECIFIED = 0;
+  CHANGE_KIND_ADDED = 1;
+  CHANGE_KIND_CHANGED = 2;
+  CHANGE_KIND_FIXED = 3;
+  CHANGE_KIND_REMOVED = 4;
+  CHANGE_KIND_SECURITY = 5;
+}
+
+message Change {
+  ChangeKind kind = 1;
+  string description = 2;
+}
+
+// Immutable, identified by (device_id, version).
+message Firmware {
+  string device_id = 1;
+  string version = 2;
+  // e.g. "official" for OEM firmware.
+  repeated string tags = 3;
+  google.protobuf.Timestamp build = 4;
+  repeated Change changelog = 5;
+  repeated FirmwareBlob blobs = 6;
+}
+
+message WatchDevicesRequest {}
+
+message WatchDevicesResponse {
+  repeated Device devices = 1;
+}
+
+message WatchFirmwareRequest {
+  string device_id = 1;
+}
+
+message WatchFirmwareResponse {
+  repeated Firmware firmware = 1;
+}
+
+message PublishFirmwareRequest {
+  Firmware firmware = 1;
+}
+
+message PublishFirmwareResponse {
+  Firmware firmware = 1;
+  // True when staged rather than published live.
+  bool staged = 2;
+}
+
+message StagedFirmware {
+  Firmware firmware = 1;
+  string submitted_by = 2;
+}
+
+message ListStagedFirmwareRequest {}
+
+message ListStagedFirmwareResponse {
+  repeated StagedFirmware staged = 1;
+}
+
+message ReviewStagedFirmwareRequest {
+  string device_id = 1;
+  string version = 2;
+  bool approve = 3;
+}
+
+message ReviewStagedFirmwareResponse {
+  // Set when approved (now live); empty when rejected.
+  Firmware firmware = 1;
+}

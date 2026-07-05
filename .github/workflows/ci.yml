@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/rust
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: cargo install protoc-gen-buffa-packaging --locked
+      - run: buf lint
+      - run: buf generate
+      - run: cargo check --locked --all-features
+        working-directory: packages/rust
+      - run: cargo check --locked --no-default-features
+        working-directory: packages/rust
+      - run: deno check mod.ts
+        working-directory: packages/ts
+
+  publish:
+    if: github.event_name == 'push'
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: bufbuild/buf-action@v1
+        with:
+          token: ${{ secrets.BUF_TOKEN }}
+          push_create_visibility: public
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: cargo install protoc-gen-buffa-packaging --locked
+      - run: buf generate
+      - run: cp LICENSE packages/rust/LICENSE && cp LICENSE packages/ts/LICENSE && cp README.md packages/rust/README.md && cp README.md packages/ts/README.md
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: crates-auth
+      - run: cargo publish --allow-dirty
+        working-directory: packages/rust
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
+      - run: deno publish --allow-dirty
+        working-directory: packages/ts

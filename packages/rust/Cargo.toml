@@ -1,0 +1,23 @@
+[package]
+name = "inex-protobufs"
+description = "inex service protobuf definitions"
+version = "0.1.1"
+edition = "2024"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/inex-rs/protobufs"
+readme = "README.md"
+include = ["**/*.rs", "Cargo.toml", "LICENSE", "README.md"]
+
+[dependencies]
+buffa = { version = "0.7", features = ["json"] }
+buffa-types = { version = "0.7", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+connectrpc = { version = "0.7", features = ["axum", "client", "server"], optional = true }
+http = { version = "1", optional = true }
+http-body = { version = "1", optional = true }
+
+[features]
+default = ["connect"]
+connect = ["dep:connectrpc", "dep:http", "dep:http-body"]
+
+[workspace]

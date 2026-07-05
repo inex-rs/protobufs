@@ -1,0 +1,16 @@
+{
+  "name": "@inex/protobufs",
+  "version": "0.1.1",
+  "exports": {
+    ".": "./mod.ts"
+  },
+  "imports": {
+    "@bufbuild/protobuf": "npm:@bufbuild/protobuf@^2.11.0"
+  },
+  "publish": {
+    "exclude": ["!lib", "!README.md"]
+  },
+  "fmt": {
+    "exclude": ["lib/"]
+  }
+}

@@ -1,0 +1,24 @@
+version: v2
+plugins:
+  - remote: buf.build/bufbuild/es:v2.12.1
+    out: packages/ts/lib
+    opt:
+      - target=ts
+      - import_extension=ts
+    include_imports: true
+  - remote: buf.build/anthropics/buffa:v0.7.1
+    out: packages/rust/src/generated-buffa
+    opt:
+      - json=true
+  - local: protoc-gen-buffa-packaging
+    out: packages/rust/src/generated-buffa
+    strategy: all
+  - remote: buf.build/anthropics/connect-rust:v0.7.0
+    out: packages/rust/src/generated-connect
+    opt:
+      - extern_path=.=crate::buffa
+  - local: protoc-gen-buffa-packaging
+    out: packages/rust/src/generated-connect
+    strategy: all
+    opt:
+      - filter=services
