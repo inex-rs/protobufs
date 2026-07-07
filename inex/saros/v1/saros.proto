@@ -4,24 +4,44 @@ package inex.saros.v1;
 
 import "google/protobuf/timestamp.proto";
 
-// The firmware registry. Devices, their fixed slot layouts, and presentation
-// all come from the server's device catalogue (keyed by device_id); this
-// service serves the immutable firmware versions published against them.
-// Enumeration is unauthenticated; publishing needs a session or the service
-// token — admin/service goes live, other sessions land in staging until an
-// admin reviews them.
+// The firmware registry: immutable firmware versions published against the
+// server's device catalogue (keyed by device_id, which also supplies each
+// device's slot layout and presentation). Enumeration is public; publishing
+// needs a session or the service token and always lands in staging until an
+// admin approves it.
 service FirmwareService {
-  // The devices that have published firmware, then a fresh snapshot on every
-  // change.
+  // Full device set on the first message, then only added/changed devices
+  // (merge by id).
   rpc WatchDevices(WatchDevicesRequest) returns (stream WatchDevicesResponse);
+  // Full firmware set on the first message, then only newly-published versions
+  // (merge by device_id + version).
   rpc WatchFirmware(WatchFirmwareRequest) returns (stream WatchFirmwareResponse);
-  // device_id must be a known catalogue device and every blob uploaded; a
-  // duplicate (device_id, version) is AlreadyExists. Non-admin sessions stage.
+  // Submit a firmware version for review. device_id must be a known device and
+  // every blob already uploaded; an already-live coordinate is AlreadyExists.
   rpc PublishFirmware(PublishFirmwareRequest) returns (PublishFirmwareResponse);
-  // Admin only.
-  rpc ListStagedFirmware(ListStagedFirmwareRequest) returns (ListStagedFirmwareResponse);
-  // Admin: approve a staged submission (into the live catalogue) or reject it.
+  // Admin: the pending-review queue as a live stream (full set on each change).
+  rpc WatchStagedFirmware(WatchStagedFirmwareRequest) returns (stream WatchStagedFirmwareResponse);
+  // Admin: approve a pending submission into the catalogue, or reject it.
   rpc ReviewStagedFirmware(ReviewStagedFirmwareRequest) returns (ReviewStagedFirmwareResponse);
+  // Admin: catalogue counts + operational metrics for the dashboard, streamed
+  // live (re-emitted on a short interval).
+  rpc WatchServerStats(WatchServerStatsRequest) returns (stream WatchServerStatsResponse);
+  // Admin: a newest-first snapshot of the audit log, then each new entry as
+  // it's recorded (merge by prepending).
+  rpc WatchAuditLog(WatchAuditLogRequest) returns (stream WatchAuditLogResponse);
+  // Admin: paged audit history (older entries + filtering + export), newest
+  // first. Cursor via `before_cursor`.
+  rpc ListAuditLog(ListAuditLogRequest) returns (ListAuditLogResponse);
+  // Follow / unfollow a device to be notified when new firmware is published
+  // for it (session required).
+  rpc FollowDevice(FollowDeviceRequest) returns (FollowDeviceResponse);
+  // The device ids the caller follows (session required).
+  rpc ListFollows(ListFollowsRequest) returns (ListFollowsResponse);
+  // The caller's own firmware submissions and their review status — a live
+  // stream for the submitter's "my submissions" view (session required).
+  rpc WatchMySubmissions(WatchMySubmissionsRequest) returns (stream WatchMySubmissionsResponse);
+  // Admin: periodic historical metric samples for the dashboard trend charts.
+  rpc GetMetricsHistory(GetMetricsHistoryRequest) returns (GetMetricsHistoryResponse);
 }
 
 message BlobSlot {
@@ -29,8 +49,8 @@ message BlobSlot {
   string description = 2;
 }
 
-// A console generation. Devkits are cross-generational (a TWL unit also runs
-// NTR, the Pocket cart runs AGB/CGB/DMG), so Device.platforms is a set.
+// A console generation. Devkits are cross-generational (a TWL unit runs NTR
+// too, the Pocket cart runs AGB/CGB/DMG), so Device.platforms is a set.
 enum Platform {
   PLATFORM_UNSPECIFIED = 0;
   PLATFORM_DMG = 1;
@@ -41,7 +61,7 @@ enum Platform {
   PLATFORM_CTR = 6;
 }
 
-// Presentation for a device, served from the server's catalogue. Output only.
+// Presentation for a device, from the server's catalogue.
 message Device {
   string id = 1;
   string name = 2;
@@ -49,7 +69,7 @@ message Device {
   // FirmwareBlob.slot indexes into this.
   repeated BlobSlot slots = 4;
   uint32 firmware_count = 5;
-  // Accent colour (`#rrggbb`).
+  // Accent colour, `#rrggbb`.
   string colour = 6;
   repeated Platform platforms = 7;
 }
@@ -58,7 +78,7 @@ message FirmwareBlob {
   // Indexes into Device.slots.
   uint32 slot = 1;
   // Canonical file name to write the blob under.
-  string file = 2;
+  string filename = 2;
   uint64 size_bytes = 3;
   // Lowercase-hex SHA-256 — the BlobService key.
   string sha256 = 4;
@@ -78,15 +98,17 @@ message Change {
   string description = 2;
 }
 
-// Immutable, identified by (device_id, version).
+// Immutable, identified by device_id + version.
 message Firmware {
   string device_id = 1;
   string version = 2;
   // e.g. "official" for OEM firmware.
   repeated string tags = 3;
-  google.protobuf.Timestamp build = 4;
+  google.protobuf.Timestamp built_at = 4;
   repeated Change changelog = 5;
   repeated FirmwareBlob blobs = 6;
+  // Total blob downloads for this version (output only, not in the manifest).
+  uint64 downloads = 7;
 }
 
 message WatchDevicesRequest {}
@@ -108,9 +130,8 @@ message PublishFirmwareRequest {
 }
 
 message PublishFirmwareResponse {
+  // The parked submission, echoed back.
   Firmware firmware = 1;
-  // True when staged rather than published live.
-  bool staged = 2;
 }
 
 message StagedFirmware {
@@ -118,9 +139,10 @@ message StagedFirmware {
   string submitted_by = 2;
 }
 
-message ListStagedFirmwareRequest {}
+message WatchStagedFirmwareRequest {}
 
-message ListStagedFirmwareResponse {
+message WatchStagedFirmwareResponse {
+  // The full pending-review set, re-sent on every change.
   repeated StagedFirmware staged = 1;
 }
 
@@ -131,6 +153,159 @@ message ReviewStagedFirmwareRequest {
 }
 
 message ReviewStagedFirmwareResponse {
-  // Set when approved (now live); empty when rejected.
+  // Set when approved (now live), empty when rejected.
   Firmware firmware = 1;
+}
+
+message WatchServerStatsRequest {}
+
+message WatchServerStatsResponse {
+  // Catalogue totals — named to match MetricsSample.
+  uint64 users = 1;
+  uint64 devices = 2;
+  uint64 firmware = 3;
+  uint64 staged = 4;
+  // Distinct blobs referenced by live or staged firmware, and their total size.
+  uint64 blobs = 5;
+  uint64 blob_bytes = 6;
+  // Operational metrics, counted since the process started.
+  uint64 uptime_seconds = 7;
+  uint64 downloads = 8;
+  uint64 uploads = 9;
+  uint64 submissions = 10;
+  uint64 reviews = 11;
+  uint64 sign_ins = 12;
+  // Whether an object-storage egress mirror is configured.
+  bool mirror_configured = 13;
+  // Hourly metric history (oldest-first) for the trend charts, carried on the
+  // stats stream so the dashboard needs one RPC (GetMetricsHistory still serves
+  // non-streaming callers).
+  repeated MetricsSample history = 14;
+}
+
+// A recorded, admin-visible action.
+enum AuditAction {
+  AUDIT_ACTION_UNSPECIFIED = 0;
+  AUDIT_ACTION_FIRMWARE_SUBMITTED = 1;
+  AUDIT_ACTION_FIRMWARE_APPROVED = 2;
+  AUDIT_ACTION_FIRMWARE_REJECTED = 3;
+  AUDIT_ACTION_ACCOUNT_REGISTERED = 4;
+  AUDIT_ACTION_SIGNED_IN = 5;
+  AUDIT_ACTION_TOKEN_CREATED = 6;
+  AUDIT_ACTION_SESSION_REVOKED = 7;
+  AUDIT_ACTION_CREDENTIAL_ADDED = 8;
+  AUDIT_ACTION_CREDENTIAL_REMOVED = 9;
+  AUDIT_ACTION_EMAIL_CHANGED = 10;
+}
+
+// The bucket an action falls in — drives colour, filtering, and retention.
+// Derived from the action server-side.
+enum AuditCategory {
+  AUDIT_CATEGORY_UNSPECIFIED = 0;
+  // Sign-ins, credential/session/token changes, email changes.
+  AUDIT_CATEGORY_SECURITY = 1;
+  // Firmware submit / approve / reject.
+  AUDIT_CATEGORY_MODERATION = 2;
+  // Low-signal / everything else.
+  AUDIT_CATEGORY_ROUTINE = 3;
+}
+
+message AuditEntry {
+  google.protobuf.Timestamp at = 1;
+  // The account that acted, "service" for the service token, "" if anonymous.
+  string actor = 2;
+  AuditAction action = 3;
+  // What was acted on, e.g. "device/version" or a credential id.
+  string target = 4;
+  AuditCategory category = 5;
+}
+
+message WatchAuditLogRequest {
+  // Size of the initial newest-first snapshot; 0 = the server default.
+  uint32 limit = 1;
+  // Optional filters (UNSPECIFIED/empty = no filter).
+  AuditCategory category = 2;
+  string actor = 3;
+}
+
+message WatchAuditLogResponse {
+  // A newest-first batch: the snapshot on the first message, then each newly
+  // recorded entry.
+  repeated AuditEntry entries = 1;
+}
+
+message ListAuditLogRequest {
+  // Page size; 0 = the server default.
+  uint32 limit = 1;
+  // Return entries older than this cursor; 0 = start from newest. Use the
+  // response's `next_cursor` to page.
+  uint64 before_cursor = 2;
+  // Optional filters (UNSPECIFIED/empty = no filter).
+  AuditCategory category = 3;
+  string actor = 4;
+}
+
+message ListAuditLogResponse {
+  // Newest-first page.
+  repeated AuditEntry entries = 1;
+  // Pass as the next `before_cursor`; 0 when there are no older entries.
+  uint64 next_cursor = 2;
+}
+
+message FollowDeviceRequest {
+  string device_id = 1;
+  // True to follow, false to unfollow.
+  bool follow = 2;
+}
+
+message FollowDeviceResponse {
+  bool following = 1;
+}
+
+message ListFollowsRequest {}
+
+message ListFollowsResponse {
+  repeated string device_ids = 1;
+}
+
+enum SubmissionStatus {
+  SUBMISSION_STATUS_UNSPECIFIED = 0;
+  SUBMISSION_STATUS_PENDING = 1;
+  SUBMISSION_STATUS_APPROVED = 2;
+  SUBMISSION_STATUS_REJECTED = 3;
+}
+
+message Submission {
+  string device_id = 1;
+  string version = 2;
+  SubmissionStatus status = 3;
+  google.protobuf.Timestamp submitted_at = 4;
+  // Set once reviewed (approved/rejected).
+  google.protobuf.Timestamp reviewed_at = 5;
+}
+
+message WatchMySubmissionsRequest {}
+
+message WatchMySubmissionsResponse {
+  // Newest-first; re-sent on change.
+  repeated Submission submissions = 1;
+}
+
+// One periodic snapshot of the operational metrics, for trend charts.
+message MetricsSample {
+  google.protobuf.Timestamp at = 1;
+  uint64 users = 2;
+  uint64 devices = 3;
+  uint64 firmware = 4;
+  uint64 downloads = 5;
+  uint64 uploads = 6;
+  uint64 submissions = 7;
+  uint64 sign_ins = 8;
+}
+
+message GetMetricsHistoryRequest {}
+
+message GetMetricsHistoryResponse {
+  // Oldest-first.
+  repeated MetricsSample samples = 1;
 }

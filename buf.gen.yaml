@@ -6,7 +6,7 @@ plugins:
       - target=ts
       - import_extension=ts
     include_imports: true
-  - remote: buf.build/anthropics/buffa:v0.7.1
+  - remote: buf.build/anthropics/buffa:v0.8.0
     out: packages/rust/src/generated-buffa
     opt:
       - json=true

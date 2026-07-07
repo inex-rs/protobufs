@@ -2,12 +2,15 @@ edition = "2023";
 
 package inex.saros.v1;
 
-// Content-addressed blob storage, keyed by lowercase-hex SHA-256. Stat is
-// unauthenticated; Upload and Download need a session or the service token.
+// Content-addressed blob storage, keyed by lowercase-hex SHA-256. Every method
+// needs a session or the service token.
 service BlobService {
   // Idempotent — same bytes, same sha256.
   rpc Upload(UploadRequest) returns (UploadResponse);
   rpc Stat(StatRequest) returns (StatResponse);
+  // Authorize a download. With an egress mirror configured the response is a
+  // fetch-here `url` (presigned S3, or public/CDN); otherwise the bytes come
+  // back inline as `content`.
   rpc Download(DownloadRequest) returns (DownloadResponse);
 }
 
@@ -34,5 +37,8 @@ message DownloadRequest {
 }
 
 message DownloadResponse {
+  // Inline bytes — set by the filesystem-only backend. Empty when `url` is set.
   bytes content = 1;
+  // Fetch-here URL — set when an egress mirror serves the bytes.
+  string url = 2;
 }

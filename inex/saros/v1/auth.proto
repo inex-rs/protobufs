@@ -2,25 +2,26 @@ edition = "2023";
 
 package inex.saros.v1;
 
+import "google/protobuf/timestamp.proto";
+import "inex/saros/v1/saros.proto";
+
 // Passwordless sign-in via WebAuthn/passkeys — no external IdP. BeginPasskey
-// returns the browser's ceremony options as a JSON string (flow_id ties a
-// finish to its begin); FinishPasskey verifies the credential and mints an
-// opaque token sent as `Authorization: Bearer <token>`.
+// returns the browser's ceremony options as JSON (flow_id ties a finish to its
+// begin); FinishPasskey verifies the credential and mints the bearer token.
 service AuthService {
-  // Anonymous (empty username) is not an error.
   rpc WhoAmI(WhoAmIRequest) returns (WhoAmIResponse);
 
-  // Empty username signs in (usernameless); a username registers a new
-  // account. `mode` tells the browser which ceremony to run.
+  // Empty username signs in (usernameless); a username registers a new account.
   rpc BeginPasskey(BeginPasskeyRequest) returns (BeginPasskeyResponse);
   rpc FinishPasskey(FinishPasskeyRequest) returns (FinishPasskeyResponse);
 
-  // Sign a tool (CLI, studio, …) in without pasting a token: it opens
-  // verification_uri and polls until the signed-in user approves.
+  // Sign a tool (CLI, studio) in without pasting a token: it opens
+  // verification_uri; WatchLogin streams the decision.
   rpc BeginLogin(BeginLoginRequest) returns (BeginLoginResponse);
-  rpc PollLogin(PollLoginRequest) returns (PollLoginResponse);
-
-  // Browser side of the approval flow (session required).
+  // Stream the sign-in's status until it's decided (approved/denied/expired) —
+  // replaces client polling.
+  rpc WatchLogin(WatchLoginRequest) returns (stream WatchLoginResponse);
+  // Browser side of that flow (session required).
   rpc DescribeLogin(DescribeLoginRequest) returns (DescribeLoginResponse);
   rpc DecideLogin(DecideLoginRequest) returns (DecideLoginResponse);
 
@@ -28,9 +29,39 @@ service AuthService {
   rpc CreateApiToken(CreateApiTokenRequest) returns (CreateApiTokenResponse);
 
   rpc Logout(LogoutRequest) returns (LogoutResponse);
+
+  // ── account self-service (session required) ──
+  // Adding a credential runs a second registration ceremony against the
+  // existing account.
+  rpc ListCredentials(ListCredentialsRequest) returns (ListCredentialsResponse);
+  rpc BeginAddCredential(BeginAddCredentialRequest) returns (BeginAddCredentialResponse);
+  rpc FinishAddCredential(FinishAddCredentialRequest) returns (FinishAddCredentialResponse);
+  // Refused if it's the account's last credential.
+  rpc RemoveCredential(RemoveCredentialRequest) returns (RemoveCredentialResponse);
+
+  // Stream the caller's live sign-ins (browser sessions + API/CLI tokens),
+  // re-emitted on any add/revoke.
+  rpc WatchSessions(WatchSessionsRequest) returns (stream WatchSessionsResponse);
+  rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse);
+  // Revoke every session except the one making the request ("sign out
+  // everywhere"). Returns how many were revoked.
+  rpc RevokeOtherSessions(RevokeOtherSessionsRequest) returns (RevokeOtherSessionsResponse);
+
+  // Set (or, with an empty address, clear) the caller's recovery email. Unique
+  // across accounts.
+  rpc SetEmail(SetEmailRequest) returns (SetEmailResponse);
+
+  // The caller's own security activity (sign-ins, credential/session/token/
+  // email changes) as a live newest-first stream — the account "security log".
+  rpc WatchOwnActivity(WatchOwnActivityRequest) returns (stream WatchOwnActivityResponse);
+
+  // In-app notification inbox (submission decisions, new sign-ins, new firmware
+  // on followed devices) — a live stream for the bell, plus mark-read.
+  rpc WatchNotifications(WatchNotificationsRequest) returns (stream WatchNotificationsResponse);
+  rpc MarkNotificationRead(MarkNotificationReadRequest) returns (MarkNotificationReadResponse);
+  rpc MarkAllNotificationsRead(MarkAllNotificationsReadRequest) returns (MarkAllNotificationsReadResponse);
 }
 
-// Which WebAuthn ceremony BeginPasskey started.
 enum PasskeyMode {
   PASSKEY_MODE_UNSPECIFIED = 0;
   PASSKEY_MODE_REGISTER = 1;
@@ -50,6 +81,8 @@ message BeginPasskeyResponse {
 message FinishPasskeyRequest {
   string flow_id = 1;
   string credential_json = 2;
+  // Registration only (ignored when signing in): an optional recovery email.
+  string email = 3;
 }
 
 message FinishPasskeyResponse {
@@ -80,11 +113,11 @@ message BeginLoginResponse {
   int32 expires_in_secs = 5;
 }
 
-message PollLoginRequest {
+message WatchLoginRequest {
   string device_code = 1;
 }
 
-message PollLoginResponse {
+message WatchLoginResponse {
   LoginStatus status = 1;
   // Set once, only when APPROVED.
   string token = 2;
@@ -116,6 +149,9 @@ message WhoAmIResponse {
   // Empty when anonymous.
   string username = 1;
   bool admin = 2;
+  // The caller's own recovery email (empty if none); the client derives its
+  // Gravatar from it.
+  string email = 3;
 }
 
 message CreateApiTokenRequest {
@@ -129,3 +165,138 @@ message CreateApiTokenResponse {
 message LogoutRequest {}
 
 message LogoutResponse {}
+
+message Credential {
+  // Opaque handle (the credential id), stable for removal.
+  string id = 1;
+  // User-chosen nickname, e.g. "MacBook Touch ID".
+  string label = 2;
+  google.protobuf.Timestamp added_at = 3;
+}
+
+message ListCredentialsRequest {}
+
+message ListCredentialsResponse {
+  repeated Credential credentials = 1;
+}
+
+message BeginAddCredentialRequest {}
+
+message BeginAddCredentialResponse {
+  string flow_id = 1;
+  string options_json = 2;
+}
+
+message FinishAddCredentialRequest {
+  string flow_id = 1;
+  string credential_json = 2;
+  string label = 3;
+}
+
+message FinishAddCredentialResponse {
+  Credential credential = 1;
+}
+
+message RemoveCredentialRequest {
+  string id = 1;
+}
+
+message RemoveCredentialResponse {}
+
+enum SessionKind {
+  SESSION_KIND_UNSPECIFIED = 0;
+  SESSION_KIND_WEB = 1;
+  SESSION_KIND_API = 2;
+}
+
+message Session {
+  // Opaque handle (a prefix of the token's digest — never the token itself).
+  string id = 1;
+  SessionKind kind = 2;
+  string label = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp expires_at = 5;
+  // The session making this request.
+  bool current = 6;
+  // Last time the session was used (best-effort, updated at most ~hourly).
+  google.protobuf.Timestamp last_seen = 7;
+  // Client IP and a coarse device string parsed from the User-Agent
+  // ("Chrome on macOS"), recorded on use.
+  string ip = 8;
+  string device = 9;
+}
+
+message WatchSessionsRequest {}
+
+message WatchSessionsResponse {
+  repeated Session sessions = 1;
+}
+
+message RevokeSessionRequest {
+  string id = 1;
+}
+
+message RevokeSessionResponse {}
+
+message RevokeOtherSessionsRequest {}
+
+message RevokeOtherSessionsResponse {
+  uint32 revoked = 1;
+}
+
+message SetEmailRequest {
+  // The new recovery email, or empty to clear it.
+  string email = 1;
+}
+
+message SetEmailResponse {}
+
+message WatchOwnActivityRequest {
+  // Size of the initial newest-first snapshot; 0 = the server default.
+  uint32 limit = 1;
+}
+
+message WatchOwnActivityResponse {
+  repeated AuditEntry entries = 1;
+}
+
+enum NotificationKind {
+  NOTIFICATION_KIND_UNSPECIFIED = 0;
+  NOTIFICATION_KIND_SUBMISSION_APPROVED = 1;
+  NOTIFICATION_KIND_SUBMISSION_REJECTED = 2;
+  // New firmware published for a device the caller follows.
+  NOTIFICATION_KIND_NEW_FIRMWARE = 3;
+  NOTIFICATION_KIND_NEW_SIGN_IN = 4;
+}
+
+message Notification {
+  uint64 id = 1;
+  google.protobuf.Timestamp at = 2;
+  NotificationKind kind = 3;
+  bool read = 4;
+  // Server-composed, ready to render.
+  string title = 5;
+  string detail = 6;
+  // In-app link target, e.g. "/saros/<device>/<version>" or "/account".
+  string link = 7;
+}
+
+message WatchNotificationsRequest {
+  // Size of the initial newest-first snapshot; 0 = the server default.
+  uint32 limit = 1;
+}
+
+message WatchNotificationsResponse {
+  // Newest-first; the full recent set, re-sent on every change.
+  repeated Notification notifications = 1;
+}
+
+message MarkNotificationReadRequest {
+  uint64 id = 1;
+}
+
+message MarkNotificationReadResponse {}
+
+message MarkAllNotificationsReadRequest {}
+
+message MarkAllNotificationsReadResponse {}
