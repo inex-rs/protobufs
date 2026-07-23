@@ -1,16 +1,16 @@
 {
   "version": "5",
   "specifiers": {
-    "npm:@bufbuild/protobuf@^2.11.0": "2.12.1"
+    "npm:@bufbuild/protobuf@^2.13.0": "2.13.0"
   },
   "npm": {
-    "@bufbuild/protobuf@2.12.1": {
-      "integrity": "sha512-BvAMfS6LrgZiryOAZ4pBYucu4wG/Ei/9o9DZ9akbREnMLbPJiom2i8b9C8IsKErQoiKqVhrerzt3kOT/RrzLHg=="
+    "@bufbuild/protobuf@2.13.0": {
+      "integrity": "sha512-acq7c49vxfm1ggJ95P70TX7ABDM0vxr1SYD3BB0o0jnBLB4OAqeHyKuN+cD3w80gXEDQ2zxHpR6CUeA+O/aU9g=="
     }
   },
   "workspace": {
     "dependencies": [
-      "npm:@bufbuild/protobuf@^2.11.0"
+      "npm:@bufbuild/protobuf@^2.13.0"
     ]
   }
 }
