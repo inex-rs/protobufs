@@ -59,11 +59,23 @@ jobs:
       - run: cargo install protoc-gen-buffa-packaging --locked
       - run: buf generate
       - run: cp LICENSE packages/rust/LICENSE && cp LICENSE packages/ts/LICENSE && cp README.md packages/rust/README.md && cp README.md packages/ts/README.md
+      # Every push to master reaches this job, so a version already on the
+      # registries is skipped rather than failing the run.
+      - id: published
+        run: |
+          v=$(sed -n 's/^version = "\(.*\)"/\1/p' packages/rust/Cargo.toml | head -1)
+          crate=$(curl -s -o /dev/null -w '%{http_code}' -A 'inex-rs/protobufs ci' "https://crates.io/api/v1/crates/inex-protobufs/$v")
+          jsr=$(curl -s -o /dev/null -w '%{http_code}' "https://jsr.io/@inex/protobufs/${v}_meta.json")
+          echo "crate=$([ "$crate" = 200 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "jsr=$([ "$jsr" = 200 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
       - uses: rust-lang/crates-io-auth-action@v1
+        if: steps.published.outputs.crate == 'false'
         id: crates-auth
       - run: cargo publish --allow-dirty
+        if: steps.published.outputs.crate == 'false'
         working-directory: packages/rust
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
       - run: deno publish --allow-dirty
+        if: steps.published.outputs.jsr == 'false'
         working-directory: packages/ts
