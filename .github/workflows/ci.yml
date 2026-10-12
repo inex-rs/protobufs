@@ -30,9 +30,18 @@ jobs:
       - run: deno check mod.ts
         working-directory: packages/ts
 
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Advisories, licences, bans and sources, per packages/rust/deny.toml.
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: packages/rust/Cargo.toml
+
   publish:
     if: github.event_name == 'push'
-    needs: check
+    needs: [check, deny]
     runs-on: ubuntu-latest
     permissions:
       contents: read
